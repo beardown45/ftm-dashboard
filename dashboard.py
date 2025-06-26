@@ -1,89 +1,124 @@
 
 import streamlit as st
 import pandas as pd
+import io
 
 st.set_page_config(page_title="FTM Dashboard", layout="centered")
 
-st.title("📊 FTM Data Tools Dashboard")
-tool = st.selectbox("Choose a tool to launch:", ["📞 Phone Mapper", "🧩 Merge Tool", "🔀 Phone Splitter"])
+st.title("📊 FTM Dashboard - Tools Menu")
 
-# ========== PHONE MAPPER ==========
-if tool == "📞 Phone Mapper":
-    st.header("📞 Phone Mapper")
-    st.write("Map phone numbers from multiple fields into ordered phone + type columns.")
+tool = st.selectbox("Select a Tool:", ["📁 Phone Mapper", "📁 Merge Tool", "📁 Phone Splitter"])
 
-    test1_file = st.file_uploader("Upload Test1 - probate.csv", type=["csv", "xlsx"])
-    test2_file = st.file_uploader("Upload Test2 - probate template.csv", type=["csv", "xlsx"])
+# -----------------------------
+# Phone Mapper Tool
+# -----------------------------
+if tool == "📁 Phone Mapper":
+    st.header("📁 Phone Mapper")
+
+    test1_file = st.file_uploader("Upload Test1 - probate.csv", type=["csv"], key="test1")
+    test2_file = st.file_uploader("Upload Test2 - probate template.csv", type=["csv"], key="test2")
 
     if test1_file and test2_file:
-        df1 = pd.read_csv(test1_file) if test1_file.name.endswith("csv") else pd.read_excel(test1_file)
-        df2 = pd.read_csv(test2_file) if test2_file.name.endswith("csv") else pd.read_excel(test2_file)
+        df1 = pd.read_csv(test1_file)
+        df2 = pd.read_csv(test2_file)
 
-        phone_cols = ['wireless1', 'wireless2', 'wireless3', 'wireless4', 'wireless5', 'wireless6', 'wireless7', 'wireless8',
-                      'landline1', 'landline2', 'landline3', 'landline4', 'landline5',
-                      'survivor wireless1', 'survivor wireless2', 'survivor wireless3', 'survivor wireless4',
-                      'survivor wireless5', 'survivor wireless6', 'survivor wireless7', 'survivor wireless8',
-                      'survivor landline1', 'survivor landline2', 'survivor landline3', 'survivor landline4', 'survivor landline5']
+        def get_phone_columns(prefix, start_idx, phone_col_base):
+            mapping = {}
+            for i in range(1, 9):
+                source = f"{prefix}{i}"
+                if source in df1.columns:
+                    mapping[phone_col_base + str(start_idx)] = df1[source]
+                    mapping["Phone Type " + str(start_idx)] = "Mobile" if "wireless" in source else "Landline"
+                    start_idx += 1
+            return mapping, start_idx
 
-        for i in range(1, 12):
-            df2[f'Phone {i}'] = ""
-            df2[f'Phone Type {i}'] = ""
+        out_df = df2.copy()
+        out_df.update(df1)
 
-        for idx, row in df1.iterrows():
-            for i, col in enumerate(phone_cols):
-                phone = row.get(col, "")
-                if pd.notna(phone) and phone != "":
-                    phone_num = phone.strip()
-                    phone_index = i + 1
-                    phone_type = "mobile" if "wireless" in col else "landline"
-                    if phone_index > 10:
-                        phone_index += 1  # skip phone 11 if needed
-                    df2.at[idx, f'Phone {phone_index}'] = phone_num
-                    df2.at[idx, f'Phone Type {phone_index}'] = phone_type
+        start = 1
+        phone_map, start = get_phone_columns("wirelessa", start, "Phone ")
+        temp, start = get_phone_columns("wirelessb", start, "Phone ")
+        phone_map.update(temp)
+        temp, start = get_phone_columns("wirelessc", start, "Phone ")
+        phone_map.update(temp)
+        temp, start = get_phone_columns("landline", start, "Phone ")
+        phone_map.update(temp)
+        temp, start = get_phone_columns("survivor wireless", start, "Phone ")
+        phone_map.update(temp)
+        temp, start = get_phone_columns("survivor landline", start, "Phone ")
+        phone_map.update(temp)
 
-            df2.at[idx, "Full Name (deceased)"] = f"{row.get('first name', '')} {row.get('last name', '')}".strip()
-            df2.at[idx, "PR Full Name"] = f"{row.get('petitioner first name', '')} {row.get('petitioner last name', '')}".strip()
-            df2.at[idx, "Attorney Full Name"] = f"{row.get('attorney first name', '')} {row.get('attorney last name', '')}".strip()
+        for col, values in phone_map.items():
+            out_df[col] = values
 
-        st.success("Mapping complete.")
-        st.download_button("Download Mapped File", df2.to_csv(index=False).encode(), "Mapped_Output.csv", "text/csv")
+        # Combine name fields
+        if "First Name" in df1.columns and "Last Name" in df1.columns:
+            out_df["Full Name (deceased)"] = df1["First Name"].fillna("") + " " + df1["Last Name"].fillna("")
+        if "Petitioner First Name" in df1.columns and "Petitioner Last Name" in df1.columns:
+            out_df["PR Full Name"] = df1["Petitioner First Name"].fillna("") + " " + df1["Petitioner Last Name"].fillna("")
+        if "Attorney First Name" in df1.columns and "Attorney Last Name" in df1.columns:
+            out_df["Attorney Full Name"] = df1["Attorney First Name"].fillna("") + " " + df1["Attorney Last Name"].fillna("")
 
-# ========== MERGE TOOL ==========
-elif tool == "🧩 Merge Tool":
-    st.header("🧩 Excel Merge Tool")
-    st.write("Merge multiple Excel or CSV files into one master file.")
+        buffer = io.BytesIO()
+        out_df.to_excel(buffer, index=False)
+        st.download_button("Download Mapped Output", buffer.getvalue(), file_name="Mapped_Output.xlsx")
 
-    uploaded_files = st.file_uploader("Upload files to merge", type=["csv", "xlsx"], accept_multiple_files=True)
+
+# -----------------------------
+# Merge Tool
+# -----------------------------
+elif tool == "📁 Merge Tool":
+    st.header("📁 Excel Merge Tool")
+
+    uploaded_files = st.file_uploader("Upload multiple Excel/CSV files to merge", type=["xlsx", "csv"], accept_multiple_files=True)
 
     if uploaded_files:
         merged_df = pd.DataFrame()
         for file in uploaded_files:
-            df = pd.read_csv(file) if file.name.endswith("csv") else pd.read_excel(file)
-            merged_df = pd.concat([merged_df, df], ignore_index=True)
+            try:
+                if file.name.endswith(".csv"):
+                    df = pd.read_csv(file)
+                else:
+                    df = pd.read_excel(file)
+                merged_df = pd.concat([merged_df, df], ignore_index=True)
+            except Exception as e:
+                st.error(f"Error reading file '{file.name}': {e}")
 
-        st.success(f"Merged {len(uploaded_files)} files successfully!")
-        st.download_button("Download Merged File", merged_df.to_csv(index=False).encode(), "Merged_Probate_Data.csv", "text/csv")
+        if not merged_df.empty:
+            buffer = io.BytesIO()
+            merged_df.to_excel(buffer, index=False)
+            st.download_button("Download Merged File", buffer.getvalue(), file_name="Merged_Probate_Data.xlsx")
 
-# ========== PHONE SPLITTER ==========
-elif tool == "🔀 Phone Splitter":
-    st.header("🔀 Phone Splitter")
-    st.write("Split each row with multiple phone numbers into separate rows (1 phone number per row).")
 
-    input_file = st.file_uploader("Upload CSV file with up to 8 phone number columns", type=["csv"])
+# -----------------------------
+# Phone Splitter
+# -----------------------------
+elif tool == "📁 Phone Splitter":
+    st.header("📁 Phone Splitter")
 
-    if input_file:
-        df = pd.read_csv(input_file)
-        phone_cols = [col for col in df.columns if "phone" in col.lower()]
+    uploaded = st.file_uploader("Upload Prospect File", type=["csv", "xlsx"])
+
+    if uploaded:
+        if uploaded.name.endswith(".csv"):
+            df = pd.read_csv(uploaded)
+        else:
+            df = pd.read_excel(uploaded)
+
+        phone_columns = [col for col in df.columns if col.lower().startswith("phone")]
+
         exploded_rows = []
-
         for _, row in df.iterrows():
-            for phone_col in phone_cols:
-                phone = row.get(phone_col)
-                if pd.notna(phone) and phone != "":
-                    new_row = row.drop(phone_cols).to_dict()
-                    new_row["Phone"] = phone
+            for phone_col in phone_columns:
+                phone_number = row[phone_col]
+                if pd.notna(phone_number) and str(phone_number).strip() != "":
+                    new_row = row.drop(labels=phone_columns).copy()
+                    new_row["Phone"] = phone_number
                     exploded_rows.append(new_row)
 
-        out_df = pd.DataFrame(exploded_rows)
-        st.success(f"Created {len(out_df)} phone-specific rows.")
-        st.download_button("Download Split File", out_df.to_csv(index=False).encode(), "Split_Phones.csv", "text/csv")
+        if exploded_rows:
+            final_df = pd.DataFrame(exploded_rows)
+            buffer = io.BytesIO()
+            final_df.to_excel(buffer, index=False)
+            st.download_button("Download Split File", buffer.getvalue(), file_name="Split_Prospects.xlsx")
+        else:
+            st.warning("No valid phone numbers found to split.")
